@@ -2,7 +2,7 @@ import tifffile
 import numpy as np
 import argparse
 
-def make_dummy_volume(a=300,b=200,c=100,nu=5):
+def make_dummy_volume(a=256,b=128,c=512,nu=2):
     # Create a dummy ellipsoid volume with x,y,z semi-axes a,b,c
     V = np.zeros((2*c+1,2*(b+nu),2*(a+nu)),dtype=np.uint8)
     for k in range(2*c+1):
@@ -14,7 +14,10 @@ def make_dummy_volume(a=300,b=200,c=100,nu=5):
             x_max = int(x_max+nu*np.random.randn())
             for x in range(x_max):
                 y = b*np.sqrt(max(0,1-(x/a)**2-(z/c)**2))
-                y = int(y+nu*np.random.randn())
+                if x > 0:
+                    y = int(y+nu*np.random.randn())
+                else:
+                    y = int(y)
                 y = max(0,y)
                 q[:y,:x] = 255
             q = q[::jdir,::idir]
@@ -54,11 +57,11 @@ if __name__ == '__main__':
     argparser.add_argument('--a',type=int,default=300,help='x semi-axis')
     argparser.add_argument('--b',type=int,default=200,help='y semi-axis')
     argparser.add_argument('--c',type=int,default=100,help='z semi-axis')
-    argparser.add_argument('--nu',type=int,default=5,help='noise level')
+    argparser.add_argument('--nu',type=int,default=2,help='noise level')
     argparser.add_argument('--nspots',type=int,default=100,help='number of spots in intensity volume')
     argparser.add_argument('--sig',type=int,default=None,help='standard deviation of spots')
     argparser.add_argument('--nsig',type=int,default=3,help='number of standard deviations represented for each spot')
-    argparser.add_argument('--padding',type=int,default=10,help='zero padding of around the volume to avoid edge effects')
+    argparser.add_argument('--padding',type=int,default=32,help='zero padding of around the volume to avoid edge effects')
     args = argparser.parse_args()
     V = make_dummy_volume(args.a,args.b,args.c,args.nu)
     V = pad_volume(V,args.padding)
