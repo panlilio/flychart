@@ -1,8 +1,9 @@
 import numpy as np
 import scipy as sp
+import itk
 
 class Chart:
-    def __init__(self,data_intensity=None,data_segmented=None,projection_type=None):
+    def __init__(self,data_intensity=None,data_segmented=None,projection_type="hammer"):
         self.data_intensity = data_intensity
         self.data_segmented = data_segmented
         self.projection_type = projection_type
@@ -73,4 +74,16 @@ class Chart:
         return g
 
         
-         
+    @staticmethod
+    def hammer_projection(phi,lam):
+        x = 2*np.sqrt(2)*np.cos(phi)*np.sin(lam/2)/(1+np.cos(phi)*np.cos(lam/2))**0.5
+        y = np.sqrt(2)*np.sin(phi)/(1+np.cos(phi)*np.cos(lam/2))**0.5
+        return x,y
+
+    @staticmethod
+    def process_slice(im_segmented,im_intensity):
+        imtype = itk.template(im_segmented)
+        cte = itk.ContourExtractor2DImageFilter[imtype].New(im_segmented)
+
+
+
