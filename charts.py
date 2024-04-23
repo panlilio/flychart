@@ -20,7 +20,6 @@ class Volume:
         self.nS = nS
 
         self.centroid = self.get_centroid()
-        self.chart_vals = {}
 
     def chart(self,show_all=True,chart_kwargs={}):
         VALS = self.get_chart_vals(**chart_kwargs)
@@ -131,6 +130,7 @@ class Volume:
 
     def get_shape_statistic(self,attr="GetCentroid",all_labels=False):
         return self._get_shape_statistic(self.data_segmented,attr=attr,im=self.data_intensity,all_labels=all_labels)
+
     @staticmethod
     def _get_shape_statistic(seg,attr="GetCentroid",im=None,all_labels=False):
         if im is None:
@@ -202,9 +202,8 @@ class Slice:
         self.boundary = self.get_boundary()
 
     def process(self):
-        if len(x)==0:
+        if len(self.boundary.x)==0:
             S,F,R,dV = None,None,None,None
-
         else:
             logger.debug('Processing boundary')
             S, R, wedge_pts = self.boundary.process()
@@ -222,6 +221,7 @@ class Slice:
 
     def get_boundary(self):
         x,y = self.get_contour()
+        x,y = self.standardize_contour_index(x,y,self.centroid)
         b = Boundary(x,y,self.centroid)
         return b
 
@@ -238,14 +238,15 @@ class Slice:
         pass
 
     @staticmethod
-    def standardize_boundary_index(x,y,centroid=(0,0)):
-        mux,muy = centroid[0],centroid[1] 
-        x_ = np.abs(x-mux)
-        y_ = y-muy
-        L = np.where(y_>0,x_,np.inf)
-        id0 = np.where(L==L.min())[0][0]
-        x = np.roll(x,-id0)
-        y = np.roll(y,-id0)
+    def standardize_contour_index(x,y,centroid=(0,0)):
+        if len(x)!=0:
+            mux,muy = centroid[0],centroid[1] 
+            x_ = np.abs(x-mux)
+            y_ = y-muy
+            L = np.where(y_>0,x_,np.inf)
+            id0 = np.where(L==L.min())[0][0]
+            x = np.roll(x,-id0)
+            y = np.roll(y,-id0)
         return x,y
 
     def get_contour(self):
@@ -272,8 +273,8 @@ class Slice:
                 y = []
                 for i in range(vertices.Size()):
                     xy = vertices.GetElement(i)
-                    x.append(int(xy[0]))
-                    y.append(int(xy[1]))
+                    x.append(xy[0])
+                    y.append(xy[1])
             logger.debug('Extracted %d contour points',len(x))
         return x,y
 
@@ -296,33 +297,42 @@ class Slice:
         return f
 
 class Boundary:
-    def __init__(self,x=(),y=(),centroid=(0,0),dr=2,dtheta=2,eps=1e-6,di=2):
+    def __init__(self,x=(),y=(),centroid=(0,0),dN=4,dT=4,eps=1e-6,di=2):
         x_,y_ = self.unique_points(x,y)
         self.x = x_
         self.y = y_
         self.centroid = centroid
-        self.dr = dr
-        self.dtheta = dtheta
+        self.dN = dN
+        self.dT = dT
         self.eps = eps # Tolerance for checking if a number is zero 
         self.di = di # \pm di points to use around the point of interest for tangent calculation
         self.n = len(self.x)
     
     @staticmethod
     def unique_points(x,y):
-        pts = np.array(list(zip(x,y)))
-        ids = np.unique(pts,axis=0,return_index=True)[1]
-        pts = np.array([pts[i] for i in sorted(ids)])
-        return pts[:,0],pts[:,1]
+        if len(x)==0:
+            return x,y
+        else:
+            pts = np.array(list(zip(x,y)))
+            ids = np.unique(pts,axis=0,return_index=True)[1]
+            pts = np.array([pts[i] for i in sorted(ids)])
+            return pts[:,0],pts[:,1]
 
-    def process(self):
+    def process(self,test_pt=None):
+        if test_pt is not None:
+            ids = [test_pt]
+        else:
+            ids = np.arange(len(self.x))
+
         S = self.arclength()
         R = self.magnitudeR()
         wedge_pts = []
-        for i in range(self.n):
+        for i in ids:
             idx = self.get_circ_idx(i)
             xs = self.x[idx]
             ys = self.y[idx]
             wedge_pts.append(self.generate_wedge_points(xs,ys))
+
         return S, R, wedge_pts
         
     def get_circ_idx(self,i):
@@ -347,15 +357,12 @@ class Boundary:
         return arclength
 
     def generate_wedge_points(self,xs=None,ys=None):
-        dr = self.dr
-        dtheta = self.dtheta
+        dN = self.dN
+        dT = self.dT
         eps = self.eps
         centroid = self.centroid
 
         #Put centroid at origin 
-        xs = xs - centroid[0]
-        ys = ys - centroid[1]
-
         midpt = int(len(xs)/2)
         xmid = xs[midpt]
         ymid = ys[midpt]
@@ -376,51 +383,45 @@ class Boundary:
         norm = np.sqrt(dxs**2 + dys**2)
         dxs = dxs/norm
         dys = dys/norm
-        
-        # Coefficients of the normal line: c11*x + c12*y + c00 = 0
-        c11 = dys
-        c12 = -dxs
-        c00 = -xmid*c11 - ymid*c12
-
-        # Origin of second coordinate system translated so that the normal passes through (0,0)
-        if np.abs(c12) < eps: #Normal line is vertical: move line along x to origin
-            x0 = -c00/c11
-            y0 = 0
-        else:
-            x0 = 0
-            y0 = -c00/c12
-        
-        x_ = xmid - x0
-        y_ = ymid - y0
-        
-        # Polar coordinates of the midpoint in second coordinate system
-        r_ = np.sqrt(x_**2 + y_**2)
-        theta_ = np.arctan2(x_,y_)
-
-        # Get extents of wedge and query x_,y_ points to see if contained in wedge
-        dtheta_rad = np.deg2rad(dtheta)
-        theta_exts = theta_ + np.array([-dtheta_rad/2,dtheta_rad/2])
-        r_exts = r_ + np.array([-dr/2,dr/2])
-
-        x_exts = r_exts[:,None]*np.cos(theta_exts)[None,:]
-        y_exts = r_exts[:,None]*np.sin(theta_exts)[None,:]
        
-        xm, xM = int(x_exts.min()), int(x_exts.max())
-        ym, yM = int(y_exts.min()), int(y_exts.max())
+        dxs,dys = (0,1) if np.abs(dxs)<eps else (dxs,dys)
+        dxs,dys = (1,0) if np.abs(dys)<eps else (dxs,dys)
 
+        # Normal and tangent vectors
+        nv = np.array([-dys,dxs])
+        tv = np.array([dxs,dys])
+        
+        if nv[1] < 0:
+            nv = -nv
+        if tv[1] < 0: 
+            tv = -tv
+
+        N_pos = self.linear_fun(xmid+dT/2*tv[0],ymid+dT/2*tv[1],nv[0],nv[1])
+        N_neg = self.linear_fun(xmid-dT/2*tv[0],ymid-dT/2*tv[1],nv[0],nv[1])
+        T_pos = self.linear_fun(xmid+dN/2*nv[0],ymid+dN/2*nv[1],tv[0],tv[1])
+        T_neg = self.linear_fun(xmid-dN/2*nv[0],ymid-dN/2*nv[1],tv[0],tv[1])
+
+        # Get extents of wedge
+        v0 = np.array([xmid,ymid])
+        V = v0[:,None]*np.ones((4))[None,:] + nv[:,None]*np.array([1,-1,1,-1])[None,:]*dN/2 + tv[:,None]*np.array([1,1,-1,-1])[None,:]*dT/2
+        
+        xm, xM = int(V[0,:].min()), int(V[0,:].max())
+        ym, yM = int(V[1,:].min()), int(V[1,:].max())
+        
         X_, Y_ = np.meshgrid(np.arange(xm,xM+1),np.arange(ym,yM+1))
         X_, Y_ = X_.flatten(), Y_.flatten()
         wedge_pts = []
         for i in range(len(X_)):
             xi = X_[i]
             yi = Y_[i]
-            r = np.sqrt(xi**2 + yi**2)
-            theta = np.arctan2(yi,xi)
-            if r >= r_exts[0] and r <= r_exts[1] and theta >= theta_exts[0] and theta <= theta_exts[1]:
-                wedge_pts.append((int(xi+x0+centroid[0]),int(yi+y0+centroid[1]))) #wedge points in original coordinate system
-        
+            if N_neg(xi) <= yi <= N_pos(xi) and T_neg(xi) <= yi <= T_pos(xi):
+                wedge_pts.append((xi,yi))
         wedge_pts = np.array(wedge_pts).astype(int)
         return wedge_pts
+
+    def linear_fun(self,x0,y0,dx,dy):
+        
+        return lambda x: dy*(x-x0)/dx + y0
         
 
 if __name__=="__main__":
