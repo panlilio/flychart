@@ -1,4 +1,4 @@
-import tifffile
+import imageio as io
 from skimage.morphology import ball, binary_opening, binary_closing
 import numpy as np
 import argparse
@@ -32,6 +32,7 @@ def pad_volume(V,padding=3,smrad=2):
     se = ball(smrad)
     V = binary_closing(V,se)
     V = binary_opening(V,se)
+    V = V.astype(np.uint8)*255
     return V
 
 def make_intensity_volume(V,nspots=100,sig=None,nsig=3,doinvert=False):
@@ -50,7 +51,11 @@ def make_intensity_volume(V,nspots=100,sig=None,nsig=3,doinvert=False):
         ym, yM = int(max(0,y-nsig*sig)), int(min(V.shape[1],y+nsig*sig+1))
         zm, zM = int(max(0,z-nsig*sig)), int(min(V.shape[0],z+nsig*sig+1))
         dx, dy, dz = xM-xm, yM-ym, zM-zm
-        offset_x, offset_y, offset_z = (2*nsig*sig+1-dx)//2, (2*nsig*sig+1-dy)//2, (2*nsig*sig+1-dz)//2
+        
+        offset_x = 0 if xm!=0 else 2*nsig*sig+1-dx
+        offset_y = 0 if ym!=0 else 2*nsig*sig+1-dy
+        offset_z = 0 if zm!=0 else 2*nsig*sig+1-dz
+
         F[zm:zM,ym:yM,xm:xM] = np.maximum(F[zm:zM,ym:yM,xm:xM],spot[offset_z:offset_z+dz,offset_y:offset_y+dy,offset_x:offset_x+dx])
     
     if doinvert:     
@@ -62,20 +67,20 @@ def make_intensity_volume(V,nspots=100,sig=None,nsig=3,doinvert=False):
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(prog="Dummy data",description="Create a dummy ellipsoid volume")
-    argparser.add_argument('--a',type=int,default=128,help='x semi-axis')
-    argparser.add_argument('--b',type=int,default=96,help='y semi-axis')
-    argparser.add_argument('--c',type=int,default=256,help='z semi-axis')
+    argparser.add_argument('--a',type=int,default=50,help='x semi-axis')
+    argparser.add_argument('--b',type=int,default=35,help='y semi-axis')
+    argparser.add_argument('--c',type=int,default=80,help='z semi-axis')
     argparser.add_argument('--nu',type=int,default=1,help='noise level')
     argparser.add_argument('--nspots',type=int,default=100,help='number of spots in intensity volume')
     argparser.add_argument('--sig',type=int,default=None,help='standard deviation of spots')
     argparser.add_argument('--nsig',type=int,default=3,help='number of standard deviations represented for each spot')
-    argparser.add_argument('--padding',type=int,default=16,help='zero padding of around the volume to avoid edge effects')
+    argparser.add_argument('--padding',type=int,default=3,help='zero padding of around the volume to avoid edge effects')
     argparser.add_argument('--smrad',type=int,default=2,help='radius of structuring element for smoothing edges')
     argparser.add_argument('--doinvert',type=bool,default=True,help='invert the intensity spots')
     args = argparser.parse_args()
     V = make_dummy_volume(args.a,args.b,args.c,args.nu)
     V = pad_volume(V,args.padding,args.smrad)
     F = make_intensity_volume(V,args.nspots,args.sig,args.nsig,args.doinvert)
-   
-    tifffile.imwrite('dummy_segmentation.tif',V)
-    tifffile.imwrite('dummy_intensity.tif',F)
+
+    io.volwrite('dummy_segmentation.tif',V)
+    io.volwrite('dummy_intensity.tif',F)
