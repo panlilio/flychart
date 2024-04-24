@@ -22,5 +22,3 @@ class TestWedge(unittest.TestCase):
             plt.plot(wp[idx][i][0], wp[idx][i][1], 'g+')
         plt.show()
 
-
-        

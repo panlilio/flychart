@@ -6,23 +6,25 @@ import argparse
 import logging
 from time import sleep
 
-logfmt = '%(asctime)s [%(levelname)s] %(message)s'
+logfmt = '%(asctime)s [%(levelname)s] %(funcName)s | %(message)s'
 logging.basicConfig(format=logfmt)
 logger = logging.getLogger('charts')
 logger.setLevel(logging.DEBUG)
 
 class Volume:
-    def __init__(self,data_intensity=None,data_segmented=None,projection_type="hammer",intensity_method="max",nS=100):
+    def __init__(self,data_intensity=None,data_segmented=None,projection_type="hammer",intensity_method="max",nS=100,
+                 boundary_kwargs={}):
         self.data_intensity = data_intensity
         self.data_segmented = data_segmented
         self.projection_type = projection_type
         self.intensity_method = intensity_method
         self.nS = nS
+        self.boundary_kwargs = boundary_kwargs
 
         self.centroid = self.get_centroid()
 
-    def chart(self,show_all=True,chart_kwargs={}):
-        VALS = self.get_chart_vals(**chart_kwargs)
+    def chart(self,show_all=True,z0=0,z1=None):
+        VALS = self.get_chart_vals(z0=z0,z1=z1)
         if VALS['X'] is None:
             nplots = 2
         else:
@@ -42,19 +44,26 @@ class Volume:
             ax0 = [ax0]
             ax1 = [ax1]
 
-        self.plot_chart(ax0[0],X=VALS['X'],Y=VALS['Y'],F=VALS['F'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Intensity')
-        self.plot_chart(ax1[0],X=VALS['X'],Y=VALS['Y'],F=VALS['dV'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Surface Area') 
+        c0 = self.plot_chart(ax0[0],X=VALS['X'],Y=VALS['Y'],F=VALS['F'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Intensity')
+        c1 = self.plot_chart(ax1[0],X=VALS['X'],Y=VALS['Y'],F=VALS['dV'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Surface Area') 
+        fig0.subplots_adjust(left=0.05,right=0.9)
+        fig1.subplots_adjust(left=0.05,right=0.9)
+        cax0 = fig0.add_axes([0.92,0.15,0.02,0.7])
+        cax1 = fig1.add_axes([0.92,0.15,0.02,0.7])
+        fig0.colorbar(c0,cax=cax0)
+        fig1.colorbar(c1,cax=cax1)
         plt.show()
 
     @staticmethod
     def plot_chart(ax,X,Y,F,xlabel='x',ylabel='y',title=None):
-        ax.pcolormesh(X,Y,F)
+        c = ax.pcolormesh(X,Y,F)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         if title is not None:
             ax.set_title(title)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
+        return c
 
     def get_chart_vals(self,z0=0,z1=None):
         if z1 is None:
@@ -69,7 +78,8 @@ class Volume:
             logger.info('Processing slice %d',z)
             im = self.intensity_slice(z)
             seg = self.segmented_slice(z)
-            sl = Slice(im,seg,intensity_method=self.intensity_method,xy_centroid=self.centroid,nS=self.nS)
+            sl = Slice(im,seg,intensity_method=self.intensity_method,xy_centroid=self.centroid,nS=self.nS,
+                       boundary_kwargs=self.boundary_kwargs)
             s,f,r,dv = sl.process()
             if s is None:
                 continue
@@ -90,7 +100,6 @@ class Volume:
             X,Y = None,None
     
         D = {'X':X,'Y':Y,'F':F,'Z':Z,'P':P,'L':L,'S':S,'dV':dV}
-                
         return D
 
     def intensity_slice(self,z):
@@ -192,14 +201,15 @@ class Volume:
         return phi
 
 class Slice:
-    def __init__(self,im_intensity,im_segmented,xy_centroid=(0,0),intensity_method="max",nS=100):
+    def __init__(self,im_intensity,im_segmented,xy_centroid=(0,0),intensity_method="max",nS=100,boundary_kwargs={}):
         self.im_intensity = im_intensity
         self.im_segmented = im_segmented
         self.centroid = xy_centroid
         self.intensity_method = intensity_method
         self.nS = nS
+        self.boundary_kwargs = boundary_kwargs
 
-        self.boundary = self.get_boundary()
+        self.boundary = self.get_boundary(boundary_kwargs)
 
     def process(self):
         if len(self.boundary.x)==0:
@@ -207,6 +217,7 @@ class Slice:
         else:
             logger.debug('Processing boundary')
             S, R, wedge_pts = self.boundary.process()
+            wedge_pts = self.clean_wedge_pts(wedge_pts)
             F = []
             dV = []
             for i in range(len(wedge_pts)):
@@ -218,11 +229,24 @@ class Slice:
             _,dV = self.resample(S_,dV)
 
         return S,F,R,dV
+    
+    def clean_wedge_pts(self,wedge_pts):
+        wedge_pts_ = []
+        for i in range(len(wedge_pts)):
+            wp = []
+            for j in range(len(wedge_pts[i])):
+                x,y = wedge_pts[i][j]
+                in_object = self.im_segmented.GetPixel(itk.Index[2]([int(x),int(y)]))
+                if in_object:
+                    wp.append((x,y))
+            if len(wp)>0:
+                wedge_pts_.append(wp)
+        return wedge_pts_
 
-    def get_boundary(self):
+    def get_boundary(self,boundary_kwargs):
         x,y = self.get_contour()
         x,y = self.standardize_contour_index(x,y,self.centroid)
-        b = Boundary(x,y,self.centroid)
+        b = Boundary(x,y,self.centroid,**boundary_kwargs)
         return b
 
     def resample(self,S,F):
@@ -297,7 +321,7 @@ class Slice:
         return f
 
 class Boundary:
-    def __init__(self,x=(),y=(),centroid=(0,0),dN=4,dT=4,eps=1e-6,di=2):
+    def __init__(self,x=(),y=(),centroid=(0,0),dN=4,dT=6,eps=1e-6,di=2):
         x_,y_ = self.unique_points(x,y)
         self.x = x_
         self.y = y_
@@ -396,10 +420,10 @@ class Boundary:
         if tv[1] < 0: 
             tv = -tv
 
-        N_pos = self.linear_fun(xmid+dT/2*tv[0],ymid+dT/2*tv[1],nv[0],nv[1])
-        N_neg = self.linear_fun(xmid-dT/2*tv[0],ymid-dT/2*tv[1],nv[0],nv[1])
-        T_pos = self.linear_fun(xmid+dN/2*nv[0],ymid+dN/2*nv[1],tv[0],tv[1])
-        T_neg = self.linear_fun(xmid-dN/2*nv[0],ymid-dN/2*nv[1],tv[0],tv[1])
+        N_pos = self.linear_fun(xmid+dT/2*tv[0],ymid+dT/2*tv[1],nv[0],nv[1],pos=True)
+        N_neg = self.linear_fun(xmid-dT/2*tv[0],ymid-dT/2*tv[1],nv[0],nv[1],pos=False)
+        T_pos = self.linear_fun(xmid+dN/2*nv[0],ymid+dN/2*nv[1],tv[0],tv[1],pos=True)
+        T_neg = self.linear_fun(xmid-dN/2*nv[0],ymid-dN/2*nv[1],tv[0],tv[1],pos=False)
 
         # Get extents of wedge
         v0 = np.array([xmid,ymid])
@@ -419,9 +443,16 @@ class Boundary:
         wedge_pts = np.array(wedge_pts).astype(int)
         return wedge_pts
 
-    def linear_fun(self,x0,y0,dx,dy):
-        
-        return lambda x: dy*(x-x0)/dx + y0
+    def linear_fun(self,x0,y0,dx,dy,pos=True):
+        if dy < self.eps:
+            return lambda x: y0
+        if dx <  self.eps:
+            if pos:
+                return lambda x: np.inf
+            else:
+                return lambda x: -np.inf
+        else:
+            return lambda x: dy*(x-x0)/dx + y0
         
 
 if __name__=="__main__":
@@ -429,13 +460,17 @@ if __name__=="__main__":
     parser.add_argument('data_intensity', type=str, help='Path to the intensity data')
     parser.add_argument('data_segmented', type=str, help='Path to the segmented data')
     parser.add_argument('--projection_type', type=str, default='hammer', help='Type of projection to use')
-    parser.add_argument('--intensity_method', type=str, default='mean', help='Method to calculate intensity')
+    parser.add_argument('--intensity_method', type=str, default='max', help='Method to calculate intensity')
     parser.add_argument('--nS', type=int, default=100, help='Number of arclength points to use for the chart')
     parser.add_argument('--z0', type=int, default=0, help='Starting slice')
     parser.add_argument('--z1', type=int, default=None, help='Ending slice')
+    parser.add_argument('--dN', type=int, default=4, help='Extent of the wedge in the normal direction')
+    parser.add_argument('--dT', type=int, default=4, help='Extent of the wedge in the tangent direction')
+    parser.add_argument('--eps', type=float, default=1e-6, help='Tolerance for checking if a number is zero')
     args = parser.parse_args()
 
     data_intensity = itk.imread(args.data_intensity)
     data_segmented = itk.imread(args.data_segmented)
-    v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS)
-    v.chart(chart_kwargs={'z0':args.z0,'z1':args.z1})
+    v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS,
+               boundary_kwargs={'dN':args.dN,'dT':args.dT})
+    v.chart(z0=args.z0,z1=args.z1)
