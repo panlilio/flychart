@@ -20,8 +20,10 @@ class Volume:
         self.intensity_method = intensity_method
         self.nS = nS
         self.boundary_kwargs = boundary_kwargs
-
+        
         self.centroid = self.get_centroid()
+        self.imtype = itk.template(self.data_intensity)
+        self.segtype = itk.template(self.data_segmented)
 
     def chart(self,show_all=True,z0=0,z1=None):
         VALS = self.get_chart_vals(z0=z0,z1=z1)
@@ -104,7 +106,7 @@ class Volume:
 
     def intensity_slice(self,z):
         h,l,w = self.data_intensity.shape
-        im = itk.Image[itk.UC,2].New()
+        im = itk.Image[self.imtype[1][0],2].New()
         start = itk.Index[2]([0,0])
         size = itk.Size[2]([w,l])
         region = itk.ImageRegion[2](start,size)
@@ -117,7 +119,7 @@ class Volume:
 
     def segmented_slice(self,z):
         h,l,w = self.data_segmented.shape
-        im = itk.Image[itk.UC,2].New()
+        im = itk.Image[self.segtype[1][0],2].New()
         start = itk.Index[2]([0,0])
         size = itk.Size[2]([w,l])
         region = itk.ImageRegion[2](start,size)
