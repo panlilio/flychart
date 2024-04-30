@@ -6,7 +6,7 @@ import argparse
 import logging
 from time import sleep
 
-logfmt = '%(asctime)s [%(levelname)s] %(funcName)s | %(message)s'
+logfmt = '%(asctime)s [%(levelname)s] %(funcName)s %(message)s'
 logging.basicConfig(format=logfmt)
 logger = logging.getLogger('charts')
 logger.setLevel(logging.DEBUG)
@@ -77,7 +77,7 @@ class Volume:
         P = []
         dV = []
         for z in range(z0,z1):
-            logger.info('Processing slice %d',z)
+            logger.info('PROCESSING SLICE %d ================',z)
             im = self.intensity_slice(z)
             seg = self.segmented_slice(z)
             sl = Slice(im,seg,intensity_method=self.intensity_method,xy_centroid=self.centroid,nS=self.nS,
@@ -94,6 +94,7 @@ class Volume:
                 P.append(phi)
                 dV.append(dv)
                 S.append(s)
+            logger.info('DONE -------------------------------')
 
         S = self.center_s(S)
         if self.projection_type.lower()=="hammer":
@@ -217,7 +218,6 @@ class Slice:
         if len(self.boundary.x)==0:
             S,F,R,dV = None,None,None,None
         else:
-            logger.debug('Processing boundary')
             S, R, wedge_pts = self.boundary.process()
             wedge_pts = self.clean_wedge_pts(wedge_pts)
             F = []
@@ -276,15 +276,13 @@ class Slice:
         return x,y
 
     def get_contour(self):
-        logger.debug('Extracting contours')
         mmf = itk.MinimumMaximumImageFilter.New(self.im_segmented)
         mmf.Update()
         max_val = mmf.GetMaximum()
         if max_val == 0:
             x,y = [],[]
-            logger.debug('All zero image: skipping slice')
+            logger.debug('\tAll zero image: skipping slice')
         else:
-            logger.debug('Extracting contours')
             imtype = itk.template(self.im_segmented)
             cte = itk.ContourExtractor2DImageFilter.New(self.im_segmented)
             cte.SetContourValue(254)
@@ -301,7 +299,7 @@ class Slice:
                     xy = vertices.GetElement(i)
                     x.append(xy[0])
                     y.append(xy[1])
-            logger.debug('Extracted %d contour points',len(x))
+            logger.debug('\tExtracted %d contour points',len(x))
         return x,y
 
     def get_intensity(self,pts):
@@ -469,10 +467,17 @@ if __name__=="__main__":
     parser.add_argument('--dN', type=int, default=4, help='Extent of the wedge in the normal direction')
     parser.add_argument('--dT', type=int, default=4, help='Extent of the wedge in the tangent direction')
     parser.add_argument('--eps', type=float, default=1e-6, help='Tolerance for checking if a number is zero')
+    parser.add_argument('--di', type=int, default=2, help='Number of points to use around the point of interest for tangent calculation')
+    parser.add_argument('--verbose', type=bool, default=False, help='Print debug messages')
     args = parser.parse_args()
+
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
 
     data_intensity = itk.imread(args.data_intensity)
     data_segmented = itk.imread(args.data_segmented)
     v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS,
-               boundary_kwargs={'dN':args.dN,'dT':args.dT})
+               boundary_kwargs={'di':args.di,'eps':args.eps,'dN':args.dN,'dT':args.dT})
     v.chart(z0=args.z0,z1=args.z1)
