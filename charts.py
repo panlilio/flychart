@@ -38,16 +38,18 @@ class Volume:
         fig1,ax1 = plt.subplots(1,nplots)
         plt.inferno()
         if nplots>1:
-            self.plot_chart(ax0[nplots-2],X=VALS['S'],Y=VALS['Z'],F=VALS['F'],xlabel='arclength',ylabel='slice',title='Intensity')
-            self.plot_chart(ax1[nplots-2],X=VALS['S'],Y=VALS['Z'],F=VALS['dV'],xlabel='arclength',ylabel='slice',title='Surface Area')
+            c0 = self.plot_chart(ax0[nplots-2],X=VALS['S'],Y=VALS['Z'],F=VALS['F'],xlabel='arclength',ylabel='slice',title='Intensity')
+            c1 = self.plot_chart(ax1[nplots-2],X=VALS['S'],Y=VALS['Z'],F=VALS['dV'],xlabel='arclength',ylabel='slice',title='Surface Area')
             self.plot_chart(ax0[nplots-1],X=VALS['L'],Y=VALS['P'],F=VALS['F'],xlabel='lambda',ylabel='phi',title='Intensity')
             self.plot_chart(ax1[nplots-1],X=VALS['L'],Y=VALS['P'],F=VALS['dV'],xlabel='lambda',ylabel='phi',title='Surface Area')
         else:
             ax0 = [ax0]
             ax1 = [ax1]
-
-        c0 = self.plot_chart(ax0[0],X=VALS['X'],Y=VALS['Y'],F=VALS['F'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Intensity')
-        c1 = self.plot_chart(ax1[0],X=VALS['X'],Y=VALS['Y'],F=VALS['dV'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Surface Area') 
+        
+        if VALS['X'] not None:
+            c0 = self.plot_chart(ax0[0],X=VALS['X'],Y=VALS['Y'],F=VALS['F'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Intensity')
+            c1 = self.plot_chart(ax1[0],X=VALS['X'],Y=VALS['Y'],F=VALS['dV'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Surface Area') 
+        
         fig0.subplots_adjust(left=0.05,right=0.9)
         fig1.subplots_adjust(left=0.05,right=0.9)
         cax0 = fig0.add_axes([0.92,0.15,0.02,0.7])
@@ -70,6 +72,7 @@ class Volume:
     def get_chart_vals(self,z0=0,z1=None):
         if z1 is None:
             z1 = self.data_intensity.shape[0]
+        
         L = []
         F = []
         Z = []
@@ -94,7 +97,7 @@ class Volume:
                 P.append(phi)
                 dV.append(dv)
                 S.append(s)
-            logger.info('DONE -------------------------------')
+            logger.info('SLICE %d DONE ----------------------',z)
 
         S = self.center_s(S)
         if self.projection_type.lower()=="hammer":
@@ -351,12 +354,14 @@ class Boundary:
         S = self.arclength()
         R = self.magnitudeR()
         wedge_pts = []
-        for i in ids:
+        logger.debug('Processing %d points',len(ids))
+        for c,i in enumerate(ids):
             idx = self.get_circ_idx(i)
             xs = self.x[idx]
             ys = self.y[idx]
             wedge_pts.append(self.generate_wedge_points(xs,ys))
-
+            if c % 10 == 0:
+                logger.debug('Processed point %d',c)
         return S, R, wedge_pts
         
     def get_circ_idx(self,i):
@@ -468,7 +473,7 @@ if __name__=="__main__":
     parser.add_argument('--dT', type=int, default=4, help='Extent of the wedge in the tangent direction')
     parser.add_argument('--eps', type=float, default=1e-6, help='Tolerance for checking if a number is zero')
     parser.add_argument('--di', type=int, default=2, help='Number of points to use around the point of interest for tangent calculation')
-    parser.add_argument('--verbose', type=bool, default=False, help='Print debug messages')
+    parser.add_argument('--verbose', action='store_true', help='Print debug messages') 
     args = parser.parse_args()
 
     if args.verbose:
