@@ -73,13 +73,15 @@ class Volume:
         if z1 is None:
             z1 = self.data_intensity.shape[0]
         
-        L = []
-        F = []
-        Z = []
-        S = []
-        P = []
-        dV = []
-        for z in range(z0,z1):
+        nonempty = np.zeros(z1-z0).astype(bool)
+        L = np.ndarray((z1-z0,self.nS))
+        F = np.ndarray((z1-z0,self.nS))
+        Z = np.ndarray((z1-z0,self.nS))
+        S = np.ndarray((z1-z0,self.nS))
+        P = np.ndarray((z1-z0,self.nS))
+        dV = np.ndarray((z1-z0,self.nS))
+
+        for i,z in enumerate(range(z0,z1)):
             logger.info('PROCESSING SLICE %d ================',z)
             im = self.intensity_slice(z)
             seg = self.segmented_slice(z)
@@ -89,15 +91,23 @@ class Volume:
             if s is None:
                 continue
             else:
+                nonempty[i] = True
                 lam = self.s_to_lamda(s)
                 phi,z_ = self.zr_to_phi(z,r)
-                L.append(lam)
-                Z.append(z_*np.ones(len(lam)))
-                F.append(f)
-                P.append(phi)
-                dV.append(dv)
-                S.append(s)
+                L[i] = lam
+                F[i] = f
+                Z[i] = z_*np.ones(len(lam))
+                S[i] = s
+                P[i] = phi
+                dV[i] = dv
             logger.info('SLICE %d DONE ----------------------',z)
+
+        L = L[nonempty]
+        F = F[nonempty]
+        Z = Z[nonempty]
+        S = S[nonempty]
+        P = P[nonempty]
+        dV = dV[nonempty]
 
         S = self.center_s(S)
         if self.projection_type.lower()=="hammer":
