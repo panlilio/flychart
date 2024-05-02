@@ -46,7 +46,7 @@ class Volume:
             ax0 = [ax0]
             ax1 = [ax1]
         
-        if VALS['X'] not None:
+        if VALS['X'] is not None:
             c0 = self.plot_chart(ax0[0],X=VALS['X'],Y=VALS['Y'],F=VALS['F'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Intensity')
             c1 = self.plot_chart(ax1[0],X=VALS['X'],Y=VALS['Y'],F=VALS['dV'],xlabel=f'x_{self.projection_type}',ylabel=f'y_{self.projection_type}',title='Surface Area') 
         
