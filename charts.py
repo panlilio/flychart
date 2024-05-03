@@ -15,15 +15,15 @@ class Volume:
     def __init__(self,data_intensity=None,data_segmented=None,projection_type="hammer",intensity_method="max",nS=100,
                  boundary_kwargs={}):
         self.data_intensity = data_intensity
-        self.data_segmented = data_segmented
+        self.imtype = itk.template(self.data_intensity)
+        self.data_segmented = self.recast(data_segmented)
+        self.segtype = itk.template(self.data_segmented)
         self.projection_type = projection_type
         self.intensity_method = intensity_method
         self.nS = nS
         self.boundary_kwargs = boundary_kwargs
         
         self.centroid = self.get_centroid()
-        self.imtype = itk.template(self.data_intensity)
-        self.segtype = itk.template(self.data_segmented)
 
     def chart(self,show_all=True,z0=0,z1=None):
         VALS = self.get_chart_vals(z0=z0,z1=z1)
@@ -58,6 +58,18 @@ class Volume:
         fig1.colorbar(c1,cax=cax1)
         plt.show()
 
+    def recast(self,seg):
+        segtype = itk.template(seg)
+        if segtype[1][0] != self.imtype[1][0]:
+            rf = itk.RescaleIntensityImageFilter[itk.Image[segtype[1]],itk.Image[self.imtype[1]]].New(seg)
+            rf.SetOutputMinimum(0)
+            rf.SetOutputMaximum(itk.NumericTraits[self.imtype[1][0]].max())
+            rf.Update()
+            out = rf.GetOutput()
+        else:
+            out = seg
+        return out
+
     @staticmethod
     def plot_chart(ax,X,Y,F,xlabel='x',ylabel='y',title=None):
         c = ax.pcolormesh(X,Y,F)
@@ -74,12 +86,12 @@ class Volume:
             z1 = self.data_intensity.shape[0]
         
         nonempty = np.zeros(z1-z0).astype(bool)
-        L = np.ndarray((z1-z0,self.nS))
-        F = np.ndarray((z1-z0,self.nS))
-        Z = np.ndarray((z1-z0,self.nS))
-        S = np.ndarray((z1-z0,self.nS))
-        P = np.ndarray((z1-z0,self.nS))
-        dV = np.ndarray((z1-z0,self.nS))
+        L = np.ndarray((z1-z0,self.nS),dtype=np.float64)
+        F = np.ndarray((z1-z0,self.nS),dtype=np.float32)
+        Z = np.ndarray((z1-z0,self.nS),dtype=np.int16)
+        S = np.ndarray((z1-z0,self.nS),dtype=np.float64)
+        P = np.ndarray((z1-z0,self.nS),dtype=np.float64)
+        dV = np.ndarray((z1-z0,self.nS),dtype=np.uint8)
 
         for i,z in enumerate(range(z0,z1)):
             logger.info('PROCESSING SLICE %d ================',z)
@@ -96,7 +108,7 @@ class Volume:
                 phi,z_ = self.zr_to_phi(z,r)
                 L[i] = lam
                 F[i] = f
-                Z[i] = z_*np.ones(len(lam))
+                Z[i] = z_*np.ones(self.nS)
                 S[i] = s
                 P[i] = phi
                 dV[i] = dv
@@ -118,6 +130,25 @@ class Volume:
         D = {'X':X,'Y':Y,'F':F,'Z':Z,'P':P,'L':L,'S':S,'dV':dV}
         return D
 
+    def _intensity_slice(self,z):
+        pixtype = itk.template(self.data_intensity)[1][0]
+        exf = itk.ExtractImageFilter[itk.Image[pixtype,3],itk.Image[pixtype,2]].New(self.data_intensity)
+        exf.SetDirectionCollapseToSubmatrix()
+
+        inregion = self.data_intensity.GetBufferedRegion()
+        size = inregion.GetSize()
+        size[2] = 0
+        start = inregion.GetIndex()
+        start[2] = z
+        targetregion = inregion
+        targetregion.SetSize(size)
+        targetregion.SetIndex(start)
+        exf.SetExtractionRegion(targetregion)
+
+        outimage = exf.GetOutput()
+        return outimage
+
+
     def intensity_slice(self,z):
         h,l,w = self.data_intensity.shape
         im = itk.Image[self.imtype[1][0],2].New()
@@ -133,15 +164,18 @@ class Volume:
 
     def segmented_slice(self,z):
         h,l,w = self.data_segmented.shape
-        im = itk.Image[self.segtype[1][0],2].New()
+        im = itk.Image[self.imtype[1][0],2].New()
         start = itk.Index[2]([0,0])
         size = itk.Size[2]([w,l])
         region = itk.ImageRegion[2](start,size)
+        maxval = itk.NumericTraits[self.imtype[1][0]].max()
         im.SetRegions(region)
         im.Allocate()
+        im.FillBuffer(0)
         for i in range(w):
             for j in range(l):
-                im.SetPixel(itk.Index[2]([i,j]),self.data_segmented.GetPixel(itk.Index[3]([i,j,z])))
+                if self.data_segmented.GetPixel(itk.Index[3]([i,j,z])) > 0:
+                    im.SetPixel(itk.Index[2]([i,j]),maxval)
         return im
     
     def zr_to_phi(self,z,R):
