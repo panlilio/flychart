@@ -130,7 +130,7 @@ class Volume:
         D = {'X':X,'Y':Y,'F':F,'Z':Z,'P':P,'L':L,'S':S,'dV':dV}
         return D
 
-    def _intensity_slice(self,z):
+    def intensity_slice(self,z):
         pixtype = itk.template(self.data_intensity)[1][0]
         exf = itk.ExtractImageFilter[itk.Image[pixtype,3],itk.Image[pixtype,2]].New(self.data_intensity)
         exf.SetDirectionCollapseToSubmatrix()
@@ -144,40 +144,30 @@ class Volume:
         targetregion.SetSize(size)
         targetregion.SetIndex(start)
         exf.SetExtractionRegion(targetregion)
+        exf.Update()
+
+        outimage = exf.GetOutput()
+        return outimage
+    
+    def segmented_slice(self,z):
+        pixtype = itk.template(self.data_segmented)[1][0]
+        exf = itk.ExtractImageFilter[itk.Image[pixtype,3],itk.Image[pixtype,2]].New(self.data_segmented)
+        exf.SetDirectionCollapseToSubmatrix()
+
+        inregion = self.data_segmented.GetBufferedRegion()
+        size = inregion.GetSize()
+        size[2] = 0
+        start = inregion.GetIndex()
+        start[2] = z
+        targetregion = inregion
+        targetregion.SetSize(size)
+        targetregion.SetIndex(start)
+        exf.SetExtractionRegion(targetregion)
+        exf.Update()
 
         outimage = exf.GetOutput()
         return outimage
 
-
-    def intensity_slice(self,z):
-        h,l,w = self.data_intensity.shape
-        im = itk.Image[self.imtype[1][0],2].New()
-        start = itk.Index[2]([0,0])
-        size = itk.Size[2]([w,l])
-        region = itk.ImageRegion[2](start,size)
-        im.SetRegions(region)
-        im.Allocate()
-        for i in range(w):
-            for j in range(l):
-                im.SetPixel(itk.Index[2]([i,j]),self.data_intensity.GetPixel(itk.Index[3]([i,j,z])))
-        return im
-
-    def segmented_slice(self,z):
-        h,l,w = self.data_segmented.shape
-        im = itk.Image[self.imtype[1][0],2].New()
-        start = itk.Index[2]([0,0])
-        size = itk.Size[2]([w,l])
-        region = itk.ImageRegion[2](start,size)
-        maxval = itk.NumericTraits[self.imtype[1][0]].max()
-        im.SetRegions(region)
-        im.Allocate()
-        im.FillBuffer(0)
-        for i in range(w):
-            for j in range(l):
-                if self.data_segmented.GetPixel(itk.Index[3]([i,j,z])) > 0:
-                    im.SetPixel(itk.Index[2]([i,j]),maxval)
-        return im
-    
     def zr_to_phi(self,z,R):
         z_ = z - self.centroid[2]
         phi = self._zr_to_phi(z_,R)
