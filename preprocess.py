@@ -1,6 +1,13 @@
 import itk
 import numpy as np
 import scipy as sp
+import logging
+import argparse
+
+logfmt = '%(asctime)s [%(levelname)s] %(funcName)s %(message)s'
+logging.basicConfig(format=logfmt)
+logger = logging.getLogger('preprocess')
+logger.setLevel(logging.DEBUG)
 
 class Preprocess:
     def __init__(self, intensity_image=None, mask_image=None, aligned_intensity_image=None, aligned_mask_image=None,
@@ -14,6 +21,7 @@ class Preprocess:
         self.imtype = itk.Image[itk.template(self.intensity_image)[1]]
         
     def to_principal_axes(self,use_mask=True):
+        logger.debug('Calculating transformation to principal axes')
         if use_mask:
             if not self.mask_image:
                 self.mask_image = self.segment(self.intensity_image)
@@ -21,30 +29,43 @@ class Preprocess:
         else:
             imc = itk.ImageMomentsCalculator[self.imtype].New(self.intensity_image)
         imc.Compute()
+        logger.debug('...done')
         T0 = imc.GetPhysicalAxesToPrincipalAxesTransform()
         
         T1 = T0.Clone()
         T1.SetTranslation([0,0,0])
 
+        logger.debug('Transforming image extents')
         l,w,h = self.intensity_image.GetLargestPossibleRegion().GetSize()
-        exts0 = np.meshgrid(range(l),range(w),range(h))
-        exts0 = np.array(exts).reshape(3,-1).T
-        
+        exts0 = np.meshgrid((0,l),(0,w),(0,h))
+        exts0 = np.array(exts0).reshape(3,-1).T
         exts1 = []
         for ext in exts0:
-            exts1.append(T1.TransformPoint(ext))
+            exts1.append(T1.TransformPoint([int(i) for i in ext]))
         exts1 = np.array(exts1)
-        m = np.min(exts,axis=0)
-        M = np.max(exts,axis=0)
+        m = np.min(exts1,axis=0)
+        M = np.max(exts1,axis=0)
         dims = M-m
         dims = [int(d) for d in dims]
-
+        logger.debug('...done')
+        
         T2 = T0.Clone()
         T2.SetTranslation([-int(i) for i in m])
         self.transform = T2
-      
+        
+        logger.debug(f'Creating reference image of size = {dims}')
         refim = self.mkreferenceim(dims)
+        logger.debug('...done')
 
+        intensity_out, mask_out = self.resample(self.transform,refim)
+        self.aligned_intensity_image = intensity_out
+        self.aligned_mask_image = mask_out
+
+    def resample(self,transform,refim=None):
+        if not refim:
+            refim = self.mkreferenceim(self.aligned_intensity_image.GetLargestPossibleRegion().GetSize())
+       
+        logger.debug('Resampling intensity image using given transform')
         rsf = itk.ResampleImageFilter[self.imtype,self.imtype].New()
         rsf.SetInput(self.intensity_image)
         rsf.SetReferenceImage(refim)
@@ -52,12 +73,16 @@ class Preprocess:
 
         interp = itk.LinearInterpolateImageFunction[self.imtype,itk.D].New()
         rsf.SetInterpolator(interp)
-        rsf.SetTransform(self.transform)
+        rsf.SetTransform(transform)
         rsf.Update()
 
-        self.aligned_intensity_image = rsf.GetOutput()
-        self.aligned_mask_image = self.segment(self.aligned_intensity_image)
-    
+        intensity_out =  rsf.GetOutput()
+        logger.debug('...done')
+        logger.debug('Segmenting resampled intensity image')
+        mask_out = self.segment(intensity_out)
+        logger.debug('...done')
+        return intensity_out, mask_out
+
     def mkreferenceim(self,lwh):
         im = self.imtype.New()
         region = im.GetLargestPossibleRegion()
@@ -71,3 +96,20 @@ class Preprocess:
         otsu.SetInput(im)
         otsu.Update()
         return otsu.GetOutput()
+
+
+if __name__=="__main__":
+    parser = argparse.ArgumentParser(description='Preprocess image')
+    parser.add_argument('intensity_image',type=str, help='Path to intensity image')
+    parser.add_argument('--mask',type=str,default=None, help='Path to mask image')
+    args = parser.parse_args()
+    
+    intensity_image = itk.imread(args.intensity_image)
+    mask_image = itk.imread(args.mask) if args.mask else None
+    
+    p = Preprocess(intensity_image,mask_image)
+    p.to_principal_axes()
+    logger.info('Writing aligned images')
+    itk.imwrite(p.aligned_intensity_image,'aligned_intensity_image.tif')
+    itk.imwrite(p.aligned_mask_image,'aligned_mask_image.tif')
+    logger.info('Preprocessing complete')
