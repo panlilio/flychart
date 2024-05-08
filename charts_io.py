@@ -1,4 +1,5 @@
 import h5py
+import hdf5plugin
 import numpy as np
 from itk import imread, image_from_array
 
