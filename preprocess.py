@@ -19,8 +19,9 @@ class Preprocess:
         self.transform = transform
         
         self.imtype = itk.Image[itk.template(self.intensity_image)[1]]
-        
-    def to_principal_axes(self,use_mask=True):
+        self.pixtype = itk.template(self.intensity_image)[1][0]
+
+    def to_principal_axes(self,use_mask=False):
         logger.debug('Calculating transformation to principal axes')
         if use_mask:
             if not self.mask_image:
@@ -30,31 +31,29 @@ class Preprocess:
             imc = itk.ImageMomentsCalculator[self.imtype].New(self.intensity_image)
         imc.Compute()
         logger.debug('...done')
-        T0 = imc.GetPhysicalAxesToPrincipalAxesTransform()
+        fwd = imc.GetPhysicalAxesToPrincipalAxesTransform()
+        bwd = imc.GetPrincipalAxesToPhysicalAxesTransform()
+        CoG = imc.GetCenterOfGravity()
         
-        T1 = T0.Clone()
-        T1.SetTranslation([0,0,0])
-
         logger.debug('Transforming image extents')
         l,w,h = self.intensity_image.GetLargestPossibleRegion().GetSize()
         exts0 = np.meshgrid((0,l),(0,w),(0,h))
         exts0 = np.array(exts0).reshape(3,-1).T
         exts1 = []
         for ext in exts0:
-            exts1.append(T1.TransformPoint([int(i) for i in ext]))
+            exts1.append(fwd.TransformPoint([float(i) for i in ext]))
         exts1 = np.array(exts1)
         m = np.min(exts1,axis=0)
         M = np.max(exts1,axis=0)
         dims = M-m
+        m = [float(i) for i in m]
         dims = [int(d) for d in dims]
         logger.debug('...done')
         
-        T2 = T0.Clone()
-        T2.SetTranslation([-int(i) for i in m])
-        self.transform = T2
-        
+        self.transform = bwd
+       
         logger.debug(f'Creating reference image of size = {dims}')
-        refim = self.mkreferenceim(dims)
+        refim = self.mkreferenceim(dims,origin=m)
         logger.debug('...done')
 
         intensity_out, mask_out = self.resample(self.transform,refim)
@@ -83,19 +82,42 @@ class Preprocess:
         logger.debug('...done')
         return intensity_out, mask_out
 
-    def mkreferenceim(self,lwh):
+    def mkreferenceim(self,lwh,origin=[0,0,0]):
         im = self.imtype.New()
         region = im.GetLargestPossibleRegion()
         region.SetSize(lwh)
         im.SetRegions(region)
         im.Allocate()
+        im.SetOrigin(origin)
         return im
 
     def segment(self,im):
-        otsu = itk.OtsuThresholdImageFilter[self.imtype,self.imtype].New()
-        otsu.SetInput(im)
-        otsu.Update()
-        return otsu.GetOutput()
+        thresh = itk.TriangleThresholdImageFilter[self.imtype,self.imtype].New()
+        thresh.SetInput(im)
+        thresh.SetOutsideValue(itk.NumericTraits[self.pixtype].max())
+        thresh.SetInsideValue(0)
+        thresh.Update()
+
+        setype = itk.FlatStructuringElement[self.imtype.GetImageDimension()]
+        se_close = setype.Ball(5)
+        se_dilate = setype.Ball(1)
+
+        bcf = itk.BinaryMorphologicalClosingImageFilter[self.imtype,self.imtype,setype].New()
+        bcf.SetInput(thresh.GetOutput())
+        bcf.SetKernel(se_close)
+        bcf.Update()
+        
+        #bdf = itk.BinaryDilateImageFilter[self.imtype,self.imtype,setype].New()
+        #bdf.SetInput(bcf.GetOutput())
+        #bdf.SetKernel(se_dilate)
+        #bdf.Update()
+
+        bhf = itk.BinaryFillholeImageFilter[self.imtype].New()
+        bhf.SetInput(bcf.GetOutput())
+        bhf.Update()
+
+        out = bhf.GetOutput()
+        return out
 
 
 if __name__=="__main__":
