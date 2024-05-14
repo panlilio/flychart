@@ -3,6 +3,7 @@ import numpy as np
 import scipy as sp
 import logging
 import argparse
+import pickle
 
 logfmt = '%(asctime)s [%(levelname)s] %(funcName)s %(message)s'
 logging.basicConfig(format=logfmt)
@@ -11,13 +12,15 @@ logger.setLevel(logging.DEBUG)
 
 class Preprocess:
     def __init__(self, intensity_image=None, mask_image=None, aligned_intensity_image=None, aligned_mask_image=None,
-                 transform=None):
+                 fwd_transform=None,bwd_transform=None):
         self.intensity_image = intensity_image
         self.mask_image = mask_image
         self.aligned_intensity_image = aligned_intensity_image
         self.aligned_mask_image = aligned_mask_image
-        self.transform = transform
-       
+        self.fwd_transform = transform
+        self.bwd_transform = None 
+        self.fwd_origin = [0,0,0] 
+        
         imtemplate = itk.template(self.intensity_image)
         self.imtype = itk.Image[imtemplate[1]]
         self.pixtype = imtemplate[1][0]
@@ -74,14 +77,16 @@ class Preprocess:
         m = [float(i) for i in m]
         dims = [int(d) for d in dims]
         logger.debug('...done')
-        
-        self.transform = bwd
+       
+        self.fwd_origin = m
+        self.fwd_transform = fwd
+        self.bwd_transform = bwd
        
         logger.debug(f'Creating reference image of size = {dims}')
-        refim = self.mkreferenceim(dims,origin=m)
+        refim = self.mkreferenceim(dims,origin=self.fwd_origin)
         logger.debug('...done')
 
-        intensity_out, mask_out = self.resample(self.transform,refim)
+        intensity_out, mask_out = self.resample(self.bwd_transform,refim)
         self.aligned_intensity_image = intensity_out
         self.aligned_mask_image = mask_out
 
@@ -156,6 +161,13 @@ if __name__=="__main__":
     
     p = Preprocess(intensity_image,mask_image)
     p.to_principal_axes()
+
+    logger.info('Saving principal axes transformation')
+    with open('fwd_transform.pkl','wb') as f:
+        pickle.dump(p.fwd_transform,f,protocol=pickle.HIGHEST_PROTOCOL)
+    with open('fwd_origin.pkl','wb') as f:
+        pickle.dump(p.fwd_origin,f,protocol=pickle.HIGHEST_PROTOCOL)
+
     logger.info('Writing aligned images')
     itk.imwrite(p.aligned_intensity_image,'aligned_intensity_image.tif')
     itk.imwrite(p.aligned_mask_image,'aligned_mask_image.tif')
