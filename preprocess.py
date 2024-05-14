@@ -17,8 +17,8 @@ class Preprocess:
         self.mask_image = mask_image
         self.aligned_intensity_image = aligned_intensity_image
         self.aligned_mask_image = aligned_mask_image
-        self.fwd_transform = transform
-        self.bwd_transform = None 
+        self.fwd_transform = fwd_transform
+        self.bwd_transform = bwd_transform
         self.fwd_origin = [0,0,0] 
         
         imtemplate = itk.template(self.intensity_image)
