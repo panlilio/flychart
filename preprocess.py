@@ -17,15 +17,41 @@ class Preprocess:
         self.aligned_intensity_image = aligned_intensity_image
         self.aligned_mask_image = aligned_mask_image
         self.transform = transform
-        
-        self.imtype = itk.Image[itk.template(self.intensity_image)[1]]
-        self.pixtype = itk.template(self.intensity_image)[1][0]
+       
+        imtemplate = itk.template(self.intensity_image)
+        self.imtype = itk.Image[imtemplate[1]]
+        self.pixtype = imtemplate[1][0]
+        self.labelmaptype = itk.LabelMap[itk.StatisticsLabelObject[itk.UL,imtemplate[1][1]]]
 
-    def to_principal_axes(self,use_mask=False):
+    def to_principal_axes(self,use_mask=False,bounding_box_padding=1):
+        if not self.mask_image:
+            logger.debug('Creating mask image')
+            self.mask_image = self.segment(self.intensity_image)
+            logger.debug('...done')
+
+        logger.debug('Calculating bounding box extents')
+        slf = itk.BinaryImageToShapeLabelMapFilter[self.imtype,self.labelmaptype].New()
+        slf.SetInput(self.mask_image)
+        slf.Update()
+        labelmap = slf.GetOutput()
+        bb = []
+        area = []
+        for i in range(1,labelmap.GetNumberOfLabelObjects()+1):
+            b = labelmap.GetLabelObject(i).GetBoundingBox()
+            a = labelmap.GetLabelObject(i).GetPhysicalSize()
+            area.append(a)
+            bb.append(b)
+        area = np.array(area)
+        idx = np.argmax(area)
+        bb = bb[idx]
+        b0 = np.array(bb.GetIndex()) - bounding_box_padding
+        b1 = np.array(bb.GetUpperIndex()) + 1 + bounding_box_padding
+        b0 = np.maximum(b0,0)
+        b1 = np.minimum(b1,np.array(self.intensity_image.GetLargestPossibleRegion().GetSize()))
+        logger.debug('...done')
+
         logger.debug('Calculating transformation to principal axes')
         if use_mask:
-            if not self.mask_image:
-                self.mask_image = self.segment(self.intensity_image)
             imc = itk.ImageMomentsCalculator[self.imtype].New(self.mask_image)
         else:
             imc = itk.ImageMomentsCalculator[self.imtype].New(self.intensity_image)
@@ -36,8 +62,7 @@ class Preprocess:
         CoG = imc.GetCenterOfGravity()
         
         logger.debug('Transforming image extents')
-        l,w,h = self.intensity_image.GetLargestPossibleRegion().GetSize()
-        exts0 = np.meshgrid((0,l),(0,w),(0,h))
+        exts0 = np.meshgrid((b0[0],b1[0]),(b0[1],b1[1]),(b0[2],b1[2]))
         exts0 = np.array(exts0).reshape(3,-1).T
         exts1 = []
         for ext in exts0:

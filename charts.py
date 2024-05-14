@@ -322,7 +322,7 @@ class Slice:
         else:
             imtype = itk.template(self.im_segmented)
             cte = itk.ContourExtractor2DImageFilter.New(self.im_segmented)
-            cte.SetContourValue(254)
+            cte.SetContourValue(int(max_val-1))
             cte.Update()
             contours = cte.GetOutput()
             if contours is None:
