@@ -299,7 +299,8 @@ class Slice:
     def get_boundary(self,boundary_kwargs):
         x,y = self.get_contour()
         x,y = self.standardize_contour_index(x,y,self.centroid)
-        b = Boundary(x,y,self.centroid,**boundary_kwargs)
+        npts = int(self.nS*1.5)
+        b = Boundary(x,y,self.centroid,npts=npts,**boundary_kwargs)
         return b
 
     def resample(self,S,F):
@@ -372,8 +373,10 @@ class Slice:
         return f
 
 class Boundary:
-    def __init__(self,x=(),y=(),centroid=(0,0),dN=4,dT=6,eps=1e-6,di=2):
+    def __init__(self,x=(),y=(),centroid=(0,0),dN=4,dT=6,eps=1e-6,di=2,npts=200):
+        self.npts = npts 
         x_,y_ = self.unique_points(x,y)
+        x_,y_ = self.trim_points(x_,y_)
         self.x = x_
         self.y = y_
         self.centroid = centroid
@@ -382,7 +385,7 @@ class Boundary:
         self.eps = eps # Tolerance for checking if a number is zero 
         self.di = di # \pm di points to use around the point of interest for tangent calculation
         self.n = len(self.x)
-    
+
     @staticmethod
     def unique_points(x,y):
         if len(x)==0:
@@ -392,6 +395,14 @@ class Boundary:
             ids = np.unique(pts,axis=0,return_index=True)[1]
             pts = np.array([pts[i] for i in sorted(ids)])
             return pts[:,0],pts[:,1]
+
+    def trim_points(self,x,y):
+        if len(x)!=0:
+            npts = np.minimum(self.npts,len(x))
+            ids = np.linspace(0,len(x)-1,npts).astype(int)
+            x = x[ids]
+            y = y[ids]
+        return x,y
 
     def process(self,test_pt=None):
         if test_pt is not None:
@@ -577,13 +588,13 @@ if __name__=="__main__":
     parser.add_argument('data_segmented', type=str, help='Path to the segmented data')
     parser.add_argument('--projection_type', type=str, default='hammer', help='Type of projection to use')
     parser.add_argument('--intensity_method', type=str, default='max', help='Method to calculate intensity')
-    parser.add_argument('--nS', type=int, default=100, help='Number of arclength points to use for the chart')
+    parser.add_argument('--nS', type=int, default=200, help='Number of arclength points to use for the chart')
     parser.add_argument('--z0', type=int, default=0, help='Starting slice')
     parser.add_argument('--z1', type=int, default=None, help='Ending slice')
-    parser.add_argument('--dN', type=int, default=4, help='Extent of the wedge in the normal direction')
-    parser.add_argument('--dT', type=int, default=4, help='Extent of the wedge in the tangent direction')
+    parser.add_argument('--dN', type=int, default=100, help='Extent of the wedge in the normal direction')
+    parser.add_argument('--dT', type=int, default=20, help='Extent of the wedge in the tangent direction')
     parser.add_argument('--eps', type=float, default=1e-6, help='Tolerance for checking if a number is zero')
-    parser.add_argument('--di', type=int, default=2, help='Number of points to use around the point of interest for tangent calculation')
+    parser.add_argument('--di', type=int, default=4, help='Number of points to use around the point of interest for tangent calculation')
     parser.add_argument('--verbose', action='store_true', help='Print debug messages') 
     parser.add_argument('--do_save', action='store_true', help='Pickle the values needed to create the chart')
     args = parser.parse_args()

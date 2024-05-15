@@ -33,7 +33,7 @@ class Figure:
         self.tracks_transformed = []
         Z = [z[0] for z in self.chart_vals["Z"]]
         if self.fwd_transform is not None and self.tracks is not None:
-            self.tform = TrackTransformer(self.fwd_transform, self.fwd_origin, self.volume_centroid, Z=Z)
+            self.tform = TrackTransformer(self.fwd_transform, self.fwd_origin, self.volume_centroid, Z=Z, downsample_exponent=1)
             for _,track in self.tracks.items():
                 append_me = self.tform.transform(track)
                 self.tracks_transformed.append(append_me)
@@ -68,18 +68,20 @@ class Figure:
 
 
 class TrackTransformer:
-    def __init__(self, fwd_transform, fwd_origin=[0,0,0], centroid=[0,0,0],standardizer_key="01",Z=[0]):
+    def __init__(self, fwd_transform, fwd_origin=[0,0,0], centroid=[0,0,0],standardizer_key="01",Z=[0],downsample_exponent=1):
         self.fwd_transform = fwd_transform
         self.fwd_origin = fwd_origin
         self.centroid = centroid
         self.standardizer = BoundaryStandardizer(standardizer_key,centroid)
         self.Z = Z
+        self.downsample_exponent = downsample_exponent
 
     def transform(self, xyz_track):
         track_transformed = []
         for xyz in xyz_track:
             xyz_ = [float(x) for x in xyz]
             xyz_ = np.array(self.fwd_transform.TransformPoint(xyz_)) - np.array(self.fwd_origin)
+            xyz_ = xyz / 2**self.downsample_exponent
             xyz_ = xyz_.tolist()
             track_transformed.append(xyz_)
         return track_transformed
