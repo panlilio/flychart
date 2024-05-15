@@ -43,7 +43,7 @@ class Figure:
         Volume.plot_chart(ax,X=self.chart_vals[dim0],Y=self.chart_vals[dim1],F=self.chart_vals["F"],xlabel=dim0,ylabel=dim1)
         for track in self.tracks_transformed:
             coords = self.track_chart_coords(track,dim0,dim1)
-            ax.plot(coords)
+            ax.plot(coords[:,0],coords[:,1])
         plt.show()
 
     def track_chart_coords(self,track,dim0="S",dim1="Z"):
@@ -55,6 +55,7 @@ class Figure:
             val1 = self.chart_vals[dim1][z_idx]
             chart_idx = self.tform.nearest_xy_idx(xy=xy,X=self.chart_vals["x"][z_idx],Y=self.chart_vals["y"][z_idx])
             coords.append([val0[chart_idx],val1[chart_idx]])
+        coords = np.array(coords)
         return coords
             
     @staticmethod
@@ -68,7 +69,9 @@ class Figure:
 
 
 class TrackTransformer:
-    def __init__(self, fwd_transform, fwd_origin=[0,0,0], centroid=[0,0,0],standardizer_key="01",Z=[0],downsample_exponent=1):
+    def __init__(self, fwd_transform, fwd_origin=[0,0,0], centroid=[0,0,0],standardizer_key="01",
+                 Z=[0],downsample_exponent=1):
+
         self.fwd_transform = fwd_transform
         self.fwd_origin = fwd_origin
         self.centroid = centroid
@@ -81,7 +84,7 @@ class TrackTransformer:
         for xyz in xyz_track:
             xyz_ = [float(x) for x in xyz]
             xyz_ = np.array(self.fwd_transform.TransformPoint(xyz_)) - np.array(self.fwd_origin)
-            xyz_ = xyz / 2**self.downsample_exponent
+            xyz_ = xyz_ / 2**self.downsample_exponent
             xyz_ = xyz_.tolist()
             track_transformed.append(xyz_)
         return track_transformed
