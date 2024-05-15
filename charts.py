@@ -6,6 +6,7 @@ import argparse
 import logging
 from time import sleep
 import pickle
+from copy import deepcopy
 
 logfmt = '%(asctime)s [%(levelname)s] %(funcName)s %(message)s'
 logging.basicConfig(format=logfmt)
@@ -90,7 +91,7 @@ class Volume:
     def get_chart_vals(self,z0=0,z1=None):
         if z1 is None:
             z1 = self.data_intensity.shape[0]
-        
+       
         nonempty = np.zeros(z1-z0).astype(bool)
         L = np.ndarray((z1-z0,self.nS),dtype=np.float64)
         F = np.ndarray((z1-z0,self.nS),dtype=np.float32)
@@ -265,22 +266,27 @@ class Slice:
         self.boundary = self.get_boundary(boundary_kwargs)
 
     def process(self):
-        if len(self.boundary.x)==0:
+        if len(self.boundary.x_raw)==0:
             S,F,R,dV,x,y = None,None,None,None,None,None
         else:
             S, R, wedge_pts = self.boundary.process()
-            wedge_pts = self.clean_wedge_pts(wedge_pts)
-            F = []
-            dV = []
-            for i in range(len(wedge_pts)):
-                dV.append(len(wedge_pts[i]))
-                F.append(self.get_intensity(wedge_pts[i]))
-            S_ = S
-            S,F = self.resample(S_,F)
-            _,R = self.resample(S_,R)
-            _,dV = self.resample(S_,dV)
-            _,x = self.resample(S_,self.boundary.x)
-            _,y = self.resample(S_,self.boundary.y)
+            if S is None:
+                S,F,R,dV,x,y = None,None,None,None,None,None
+            elif len(S)==0:
+                S,F,R,dV,x,y = None,None,None,None,None,None
+            else:
+                wedge_pts = self.clean_wedge_pts(wedge_pts)
+                F = []
+                dV = []
+                for i in range(len(wedge_pts)):
+                    dV.append(len(wedge_pts[i]))
+                    F.append(self.get_intensity(wedge_pts[i]))
+                S_ = deepcopy(S)
+                S,F = self.resample(S_,F)
+                _,R = self.resample(S_,R)
+                _,dV = self.resample(S_,dV)
+                _,x = self.resample(S_,self.boundary.x)
+                _,y = self.resample(S_,self.boundary.y)
         return S,F,R,dV,x,y
     
     def clean_wedge_pts(self,wedge_pts):
@@ -296,8 +302,12 @@ class Slice:
                 wedge_pts_.append(wp)
         return wedge_pts_
 
-    def get_boundary(self,boundary_kwargs):
-        x,y = self.get_contour()
+    def get_boundary(self,do_preprocess=True,**boundary_kwargs):
+        if do_preprocess:
+            im = self.preprocess(self.im_segmented)
+        else:
+            im = self.im_segmented
+        x,y = self.get_contour(im)
         x,y = self.standardize_contour_index(x,y,self.centroid)
         npts = int(self.nS*1.5)
         b = Boundary(x,y,self.centroid,npts=npts,**boundary_kwargs)
@@ -312,8 +322,13 @@ class Slice:
         F_interp = np.interp(S_interp,S,F)
         return S_interp,F_interp
 
-    def prepocess(self):
-        pass
+    def preprocess(self,im):
+        se_erode = itk.FlatStructuringElement[2].Ball(int(self.boundary_kwargs["dN"]/2))
+        bef = itk.BinaryErodeImageFilter.New(im)
+        bef.SetKernel(se_erode)
+        bef.Update()
+        out = bef.GetOutput()
+        return out
 
     @staticmethod
     def standardize_contour_index(x,y,centroid=(0,0)):
@@ -327,8 +342,8 @@ class Slice:
             y = np.roll(y,-id0)
         return x,y
 
-    def get_contour(self):
-        mmf = itk.MinimumMaximumImageFilter.New(self.im_segmented)
+    def get_contour(self,im):
+        mmf = itk.MinimumMaximumImageFilter.New(im)
         mmf.Update()
         max_val = mmf.GetMaximum()
         if max_val == 0:
@@ -336,7 +351,7 @@ class Slice:
             logger.debug('\tAll zero image: skipping slice')
         else:
             imtype = itk.template(self.im_segmented)
-            cte = itk.ContourExtractor2DImageFilter.New(self.im_segmented)
+            cte = itk.ContourExtractor2DImageFilter.New(im)
             cte.SetContourValue(int(max_val-1))
             cte.Update()
             contours = cte.GetOutput()
@@ -374,17 +389,22 @@ class Slice:
 
 class Boundary:
     def __init__(self,x=(),y=(),centroid=(0,0),dN=4,dT=6,eps=1e-6,di=2,npts=200):
-        self.npts = npts 
         x_,y_ = self.unique_points(x,y)
-        x_,y_ = self.trim_points(x_,y_)
-        self.x = x_
-        self.y = y_
+        self.x = []
+        self.y = []
+        self.s = []
+        self.x_raw = x_
+        self.y_raw = y_
+        self.s_raw = self.xy_to_arclength(self.x_raw,self.y_raw)
         self.centroid = centroid
         self.dN = dN
         self.dT = dT
         self.eps = eps # Tolerance for checking if a number is zero 
         self.di = di # \pm di points to use around the point of interest for tangent calculation
-        self.n = len(self.x)
+        self.npts = np.minimum( npts, int( 2*self.s_raw[-1] / self.dT ) )
+        
+        self.dx = None
+        self.dy = None
 
     @staticmethod
     def unique_points(x,y):
@@ -396,32 +416,46 @@ class Boundary:
             pts = np.array([pts[i] for i in sorted(ids)])
             return pts[:,0],pts[:,1]
 
-    def trim_points(self,x,y):
-        if len(x)!=0:
-            npts = np.minimum(self.npts,len(x))
-            ids = np.linspace(0,len(x)-1,npts).astype(int)
-            x = x[ids]
-            y = y[ids]
-        return x,y
+    def trim_points(self):
+        x,y,s = self.x_raw,self.y_raw,self.s_raw
+        if len(x) > self.npts:
+            s_ = np.linspace(s[0],s[-1],self.npts)
+            x_ = np.interp(s_,s,x)
+            y_ = np.interp(s_,s,y)
+        else:
+            x_,y_,s_ = x,y,s
+            self.npts = len(x)
+        self.x = x_
+        self.y = y_
+        self.s = s_
 
     def process(self,test_pt=None):
-        if test_pt is not None:
-            ids = [test_pt]
-        else:
-            ids = np.arange(len(self.x))
+        if len(self.x_raw)==0:
+            return None,None,None
 
-        S = self.arclength()
-        R = self.magnitudeR()
-        wedge_pts = []
-        logger.debug('Processing %d points',len(ids))
-        for c,i in enumerate(ids):
-            idx = self.get_circ_idx(i)
-            xs = self.x[idx]
-            ys = self.y[idx]
-            wedge_pts.append(self.generate_wedge_points(xs,ys))
-            if c % 10 == 0:
-                logger.debug('Processed point %d',c)
-        return S, R, wedge_pts
+        if len(self.x)==0:
+            self.trim_points()
+
+        if test_pt is not None:
+            X,Y = [test_pt]
+        else:
+            X,Y = self.x,self.y
+
+        logger.debug('Processing %d points...',len(X))
+        S = np.zeros(len(X))
+        R = np.zeros(len(X))
+        W = []
+        for i,(x,y) in enumerate(zip(X,Y)):
+            s = self.arclength(x,y)
+            r = self.magnitudeR(x,y)
+            wedge_pts = self.generate_wedge_points(x,y,s)
+            S[i] = s
+            R[i] = r
+            W.append(wedge_pts)
+            if i % 25 == 0:
+                logger.debug('Processed %d points',i)
+        logger.debug('...done.')
+        return S, R, W
         
     def get_circ_idx(self,i):
         idx = []
@@ -429,45 +463,61 @@ class Boundary:
             idx.append(j % self.n)
         return idx
     
-    def arclength(self):
-        S = self.xy_to_arclength(self.x,self.y)
-        return S
+    def arclength(self,x,y):
+        dr = (self.x_raw - x)**2 + (self.y_raw - y)**2
+        nearest_idx = np.argmin(dr)
+        return self.s_raw[nearest_idx]
 
-    def magnitudeR(self):
-        R = np.sqrt( (self.x-self.centroid[0])**2 + (self.y-self.centroid[1])**2 )
+    def magnitudeR(self,x,y):
+        R = np.sqrt( (x-self.centroid[0])**2 + (y-self.centroid[1])**2 )
         return R
 
     @staticmethod
     def xy_to_arclength(x_,y_):
-        arclength = np.zeros(len(x_))
-        for i in range(1,len(x_)):
-            arclength[i] = arclength[i-1] + np.sqrt((x_[i]-x_[i-1])**2 + (y_[i]-y_[i-1])**2)
+        if len(x_)==0:
+            return [0]
+        else:
+            arclength = np.zeros(len(x_))
+            for i in range(1,len(x_)):
+                arclength[i] = arclength[i-1] + np.sqrt((x_[i]-x_[i-1])**2 + (y_[i]-y_[i-1])**2)
         return arclength
+    
+    def get_derivative_funs(self):
+        xs = np.array(self.x_raw)
+        ys = np.array(self.y_raw)
+        ss = np.array(self.s_raw)
+        
+        if self.di==0:
+            self._dx = np.array([ [s, xx] for s,xx in zip(ss, np.append([0],np.diff(xs))) ])
+            self._dy = np.array([ [s, yy] for s,yy in zip(ss, np.append([0],np.diff(ys))) ])
+            self.dx = self.dx_helper
+            self.dy = self.dy_helper
+        else:
+            dx = sp.interpolate.UnivariateSpline(ss,xs)
+            dy = sp.interpolate.UnivariateSpline(ss,ys)
+            self.dx = lambda s : dx(s,1)
+            self.dy = lambda s : dy(s,1)
+            
+    def dx_helper(self,s):
+        nearest_s = np.argmin(np.abs(self._dx[:,0]-s))
+        return lambda s : self._dx[nearest_s,1]
+    
+    def dy_helper(self,s):
+        nearest_s = np.argmin(np.abs(self._dy[:,0]-s))
+        return lambda s : self._dy[nearest_s,1]
 
-    def generate_wedge_points(self,xs=None,ys=None):
+    def generate_wedge_points(self,x=None,y=None,s=None):
+        if None in (self.dx,self.dy):
+            self.get_derivative_funs() 
+
         dN = self.dN
         dT = self.dT
         eps = self.eps
         centroid = self.centroid
+       
+        dxs = self.dx(s)
+        dys = self.dy(s)
 
-        #Put centroid at origin 
-        midpt = int(len(xs)/2)
-        xmid = xs[midpt]
-        ymid = ys[midpt]
-        
-        if len(xs)==2:
-            dxs = xs[1]-xs[0]
-            dys = ys[1]-ys[0]
-        else:
-            # Use spline interpolation to calculate tangent
-            xs = np.array(xs)
-            ys = np.array(ys)
-            s = self.xy_to_arclength(xs,ys)
-            spx = sp.interpolate.UnivariateSpline(s,xs)
-            spy = sp.interpolate.UnivariateSpline(s,ys)
-            dxs = spx(s[midpt],1)
-            dys = spy(s[midpt],1)
-        
         norm = np.sqrt(dxs**2 + dys**2)
         dxs = dxs/norm
         dys = dys/norm
@@ -484,13 +534,13 @@ class Boundary:
         if tv[1] < 0: 
             tv = -tv
 
-        N_pos = self.linear_fun(xmid+dT/2*tv[0],ymid+dT/2*tv[1],nv[0],nv[1],pos=True)
-        N_neg = self.linear_fun(xmid-dT/2*tv[0],ymid-dT/2*tv[1],nv[0],nv[1],pos=False)
-        T_pos = self.linear_fun(xmid+dN/2*nv[0],ymid+dN/2*nv[1],tv[0],tv[1],pos=True)
-        T_neg = self.linear_fun(xmid-dN/2*nv[0],ymid-dN/2*nv[1],tv[0],tv[1],pos=False)
+        N_pos = self.linear_fun(x+dT/2*tv[0],y+dT/2*tv[1],nv[0],nv[1],pos=True)
+        N_neg = self.linear_fun(x-dT/2*tv[0],y-dT/2*tv[1],nv[0],nv[1],pos=False)
+        T_pos = self.linear_fun(x+dN/2*nv[0],y+dN/2*nv[1],tv[0],tv[1],pos=True)
+        T_neg = self.linear_fun(x-dN/2*nv[0],y-dN/2*nv[1],tv[0],tv[1],pos=False)
 
         # Get extents of wedge
-        v0 = np.array([xmid,ymid])
+        v0 = np.array([x,y])
         V = v0[:,None]*np.ones((4))[None,:] + nv[:,None]*np.array([1,-1,1,-1])[None,:]*dN/2 + tv[:,None]*np.array([1,1,-1,-1])[None,:]*dT/2
         
         xm, xM = int(V[0,:].min()), int(V[0,:].max())
@@ -527,6 +577,7 @@ class BoundaryStandardizer:
         self.set_lambda0()
 
     def set_lambda0(self):
+        #NEEDS WORK--NOT SURE IF THIS IS CORRECT
         if self.origin_key == "10":
             self.lambda0 = 0
         elif self.origin_key == "01":
@@ -588,11 +639,11 @@ if __name__=="__main__":
     parser.add_argument('data_segmented', type=str, help='Path to the segmented data')
     parser.add_argument('--projection_type', type=str, default='hammer', help='Type of projection to use')
     parser.add_argument('--intensity_method', type=str, default='max', help='Method to calculate intensity')
-    parser.add_argument('--nS', type=int, default=200, help='Number of arclength points to use for the chart')
+    parser.add_argument('--nS', type=int, default=300, help='Number of arclength points to use for the chart')
     parser.add_argument('--z0', type=int, default=0, help='Starting slice')
     parser.add_argument('--z1', type=int, default=None, help='Ending slice')
-    parser.add_argument('--dN', type=int, default=100, help='Extent of the wedge in the normal direction')
-    parser.add_argument('--dT', type=int, default=20, help='Extent of the wedge in the tangent direction')
+    parser.add_argument('--dN', type=int, default=60, help='Extent of the wedge in the normal direction')
+    parser.add_argument('--dT', type=int, default=10, help='Extent of the wedge in the tangent direction')
     parser.add_argument('--eps', type=float, default=1e-6, help='Tolerance for checking if a number is zero')
     parser.add_argument('--di', type=int, default=4, help='Number of points to use around the point of interest for tangent calculation')
     parser.add_argument('--verbose', action='store_true', help='Print debug messages') 
@@ -609,8 +660,10 @@ if __name__=="__main__":
     v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS,
                boundary_kwargs={'di':args.di,'eps':args.eps,'dN':args.dN,'dT':args.dT})
     if args.do_save:
-        vals = v.chart(z0=args.z0,z1=args.z1,return_chart_values=True)
+        vals = v.get_chart_vals(z0=args.z0,z1=args.z1)
+        logger.info('Saving chart values and centroid info to file')
         with open('chart_vals.pkl','wb') as f:
             pickle.dump(vals,f)
         with open('centroid.pkl','wb') as f:
             pickle.dump(v.centroid,f)
+    logger.info('Done!')

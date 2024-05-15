@@ -41,6 +41,7 @@ class Tracks:
     def build_tracks_t(self,t=0,nt=10,in_voxels=True):
         # Get all spot uids at time t
         tracks = {}
+        timestamps = {}
         uids = []
         for tt in range(t,t+nt):
             idx = self.t_dict[tt]
@@ -49,22 +50,24 @@ class Tracks:
                 if u not in uids:
                     tracks[u] = []
                     tracks[u].append(self.spot_dict[u])
+                    timestamps[u].append(tt)
+                    uids.append(u)
                     uu = u
                     for i in range(t+nt-tt):
                         if uu in self.trackobj_dict:
                             uu = self.trackobj_dict[uu]
                             xyz = self.spot_dict[uu]
                             tracks[u].append(xyz)
+                            timestamps[u].append(tt+i)
                             uids.append(u)
                         else:
                             break
-       
+
         if in_voxels:
             for t in tracks:
                 tracks[t] = np.array(tracks[t]) / self.resolution
-                
-        return tracks
-
+        return tracks, timestamps
+    
     @staticmethod
     def decode_imaris_extents(ext):
         val = ""
