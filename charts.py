@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import argparse
 import logging
 from time import sleep
+import pickle
 
 logfmt = '%(asctime)s [%(levelname)s] %(funcName)s %(message)s'
 logging.basicConfig(format=logfmt)
@@ -25,7 +26,7 @@ class Volume:
         
         self.centroid = self.get_centroid()
 
-    def chart(self,show_all=True,z0=0,z1=None):
+    def chart(self,show_all=True,z0=0,z1=None,return_chart_values=True):
         VALS = self.get_chart_vals(z0=z0,z1=z1)
         if VALS['X'] is None:
             nplots = 2
@@ -56,7 +57,12 @@ class Volume:
         cax1 = fig1.add_axes([0.92,0.15,0.02,0.7])
         fig0.colorbar(c0,cax=cax0)
         fig1.colorbar(c1,cax=cax1)
+        
         plt.show()
+        if not return_chart_values:
+            return ax0,ax1
+        else:
+            return VALS
 
     def recast(self,seg):
         segtype = itk.template(seg)
@@ -92,6 +98,8 @@ class Volume:
         S = np.ndarray((z1-z0,self.nS),dtype=np.float64)
         P = np.ndarray((z1-z0,self.nS),dtype=np.float64)
         dV = np.ndarray((z1-z0,self.nS),dtype=np.uint8)
+        x = np.ndarray((z1-z0,self.nS),dtype=np.float64)
+        y = np.ndarray((z1-z0,self.nS),dtype=np.float64)
 
         for i,z in enumerate(range(z0,z1)):
             logger.info('PROCESSING SLICE %d ================',z)
@@ -99,7 +107,7 @@ class Volume:
             seg = self.segmented_slice(z)
             sl = Slice(im,seg,intensity_method=self.intensity_method,xy_centroid=self.centroid,nS=self.nS,
                        boundary_kwargs=self.boundary_kwargs)
-            s,f,r,dv = sl.process()
+            s,f,r,dv,x_,y_ = sl.process()
             if s is None:
                 continue
             else:
@@ -112,6 +120,9 @@ class Volume:
                 S[i] = s
                 P[i] = phi
                 dV[i] = dv
+                x[i] = x_
+                y[i] = y_
+
             logger.info('SLICE %d DONE ----------------------',z)
 
         L = L[nonempty]
@@ -120,6 +131,8 @@ class Volume:
         S = S[nonempty]
         P = P[nonempty]
         dV = dV[nonempty]
+        x = x[nonempty]
+        y = y[nonempty]
 
         S = self.center_s(S)
         if self.projection_type.lower()=="hammer":
@@ -127,7 +140,7 @@ class Volume:
         else:
             X,Y = None,None
     
-        D = {'X':X,'Y':Y,'F':F,'Z':Z,'P':P,'L':L,'S':S,'dV':dV}
+        D = {'X':X,'Y':Y,'F':F,'Z':Z,'P':P,'L':L,'S':S,'dV':dV,'x':x,'y':y}
         return D
 
     def intensity_slice(self,z):
@@ -247,13 +260,13 @@ class Slice:
         self.centroid = xy_centroid
         self.intensity_method = intensity_method
         self.nS = nS
-        self.boundary_kwargs = boundary_kwargs
 
+        self.boundary_kwargs = boundary_kwargs
         self.boundary = self.get_boundary(boundary_kwargs)
 
     def process(self):
         if len(self.boundary.x)==0:
-            S,F,R,dV = None,None,None,None
+            S,F,R,dV,x,y = None,None,None,None,None,None
         else:
             S, R, wedge_pts = self.boundary.process()
             wedge_pts = self.clean_wedge_pts(wedge_pts)
@@ -266,8 +279,9 @@ class Slice:
             S,F = self.resample(S_,F)
             _,R = self.resample(S_,R)
             _,dV = self.resample(S_,dV)
-
-        return S,F,R,dV
+            _,x = self.resample(S_,self.boundary.x)
+            _,y = self.resample(S_,self.boundary.y)
+        return S,F,R,dV,x,y
     
     def clean_wedge_pts(self,wedge_pts):
         wedge_pts_ = []
@@ -494,6 +508,69 @@ class Boundary:
             return lambda x: dy*(x-x0)/dx + y0
         
 
+class BoundaryStandardizer:
+    def __init__(self,origin_key="01",centroid=(0,0,0)):
+        self.origin_key = origin_key
+        self.centroid = centroid
+        self.lambda0 = 0
+        self.set_lambda0()
+
+    def set_lambda0(self):
+        if self.origin_key == "10":
+            self.lambda0 = 0
+        elif self.origin_key == "01":
+            self.lambda0 = np.pi/2
+        elif self.origin_key == "-10":
+            self.lambda0 = np.pi
+        elif self.origin_key == "0-1":
+            self.lambda0 = 3*np.pi/2
+        else:
+            logger.error('Origin key not recognized: leaving lambda0 as 0')
+
+    def standardize_xy(self,x,y):
+        x,y = self.unique_points(x,y)
+        x,y = self.make_ccw(x,y)
+        mux,muy = self.centroid[0],self.centroid[1] 
+        x_ = np.abs(x-mux)
+        y_ = y-muy
+        theta = np.arctan2(y_,x_)
+
+        x = np.roll(x,-id0)
+        y = np.roll(y,-id0)
+        return x,y
+    
+    def make_ccw(self,x,y):
+        x_ = np.array(x)-self.centroid[0]
+        y_ = np.array(y)-self.centroid[1]
+        theta = np.arctan2(y_,x_)
+        dtheta = np.diff(theta)
+        if np.mean(dtheta) < 0:
+            # x,y are clockwise --> reverse order
+            x = x[::-1]
+            y = y[::-1]
+        return x,y
+    
+    @staticmethod
+    def unique_points(x,y):
+        if len(x)==0:
+            return x,y
+        else:
+            pts = np.array(list(zip(x,y)))
+            ids = np.unique(pts,axis=0,return_index=True)[1]
+            pts = np.array([pts[i] for i in sorted(ids)])
+            return pts[:,0],pts[:,1]
+
+    def xyz_to_lambdaphi(self,xyz):
+        x,y,z = xyz
+        r = np.sqrt( (x-self.centroid[0])**2 + (y-self.centroid[1])**2 )
+        z_ = z - self.centroid[2]
+
+        phi = np.arctan2(z_,r)
+        lam = np.arctan2(y-self.centroid[1],x-self.centroid[0]) - self.lambda0
+        
+        return phi,lam
+
+
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Create a chart of a volume')
     parser.add_argument('data_intensity', type=str, help='Path to the intensity data')
@@ -508,6 +585,7 @@ if __name__=="__main__":
     parser.add_argument('--eps', type=float, default=1e-6, help='Tolerance for checking if a number is zero')
     parser.add_argument('--di', type=int, default=2, help='Number of points to use around the point of interest for tangent calculation')
     parser.add_argument('--verbose', action='store_true', help='Print debug messages') 
+    parser.add_argument('--do_save', action='store_true', help='Pickle the values needed to create the chart')
     args = parser.parse_args()
 
     if args.verbose:
@@ -519,4 +597,9 @@ if __name__=="__main__":
     data_segmented = itk.imread(args.data_segmented)
     v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS,
                boundary_kwargs={'di':args.di,'eps':args.eps,'dN':args.dN,'dT':args.dT})
-    v.chart(z0=args.z0,z1=args.z1)
+    if args.do_save:
+        vals = v.chart(z0=args.z0,z1=args.z1,return_chart_values=True)
+        with open('chart_vals.pkl','wb') as f:
+            pickle.dump(vals,f)
+        with open('centroid.pkl','wb') as f:
+            pickle.dump(v.centroid,f)
