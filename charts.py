@@ -1,5 +1,5 @@
 import numpy as np
-import scipy as sp
+from scipy.interpolate import interp1d,UnivariateSpline
 import itk
 import matplotlib.pyplot as plt
 import argparse
@@ -318,8 +318,9 @@ class Slice:
             S = np.array(S)
         if type(F) == list:
             F = np.array(F)
+        interpolator = interp1d(S,F,kind='nearest-up')
         S_interp = np.linspace(S[0],S[-1],self.nS)
-        F_interp = np.interp(S_interp,S,F)
+        F_interp = interpolator(S_interp)
         return S_interp,F_interp
 
     def preprocess(self,im):
@@ -493,8 +494,8 @@ class Boundary:
             self.dx = self.dx_helper
             self.dy = self.dy_helper
         else:
-            dx = sp.interpolate.UnivariateSpline(ss,xs)
-            dy = sp.interpolate.UnivariateSpline(ss,ys)
+            dx = UnivariateSpline(ss,xs)
+            dy = UnivariateSpline(ss,ys)
             self.dx = lambda s : dx(s,1)
             self.dy = lambda s : dy(s,1)
             
