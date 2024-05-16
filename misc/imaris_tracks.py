@@ -1,6 +1,7 @@
 import h5py
 import numpy as np
 import pickle
+import copy
 
 class Tracks:
     def __init__(self,imsfile,point_set_id=0):
@@ -23,10 +24,15 @@ class Tracks:
             # Build dictionaries using unique identifiers as keys: note that we need to explicitly access each element of
             # arrays in the h5 file because they are stored in an array format that cannot be spliced
             self.spot_dict = { s : [xyz[0] ,xyz[1], xyz[2]] for s,xyz in zip(_spot_uid,_spot_xyz) }
-            self.t_dict = { t[0] : [t[1],t[2]] for t in _spot_t }
+            self.toffset_dict = { t[0] : [t[1],t[2]] for t in _spot_t }
             self.trackobj_dict = { ed[0] : ed[1] for ed in _track_edges }
-           
             self.spot_uid = _spot_uid
+            
+            self.t_dict = {}
+            for t,idx_range in self.toffset_dict.items():
+                for i in range(idx_range[0],idx_range[1]):
+                    uid = self.spot_uid[i]
+                    self.t_dict[uid] = t 
 
             # Get the extents and resolution of the image
             self.extents_um = np.zeros((2,3))
@@ -37,37 +43,57 @@ class Tracks:
             self.volume_shape_um = self.extents_um[1] - self.extents_um[0]
             self.volume_shape = f["DataSet/ResolutionLevel 0/TimePoint 0/Channel 0/Data"].shape[::-1]
             self.resolution = np.median( self.volume_shape_um / self.volume_shape ) #assume isotropic resolution
+            self.extents = self.extents_um / self.resolution
 
-    def build_tracks_t(self,t=0,nt=10,in_voxels=True):
-        # Get all spot uids at time t
+    def build_tracks_t_all(self,t=0,nt=10,in_voxels=True):
+        # Get all spots for time t through t+nt
         tracks = {}
         timestamps = {}
         uids = []
         for tt in range(t,t+nt):
-            idx = self.t_dict[tt]
+            idx = self.toffset_dict[tt]
             uids_t = self.spot_uid[idx[0]:idx[1]]
             for u in uids_t:
-                if u not in uids:
-                    tracks[u] = []
-                    tracks[u].append(self.spot_dict[u])
-                    timestamps[u].append(tt)
-                    uids.append(u)
-                    uu = u
-                    for i in range(t+nt-tt):
-                        if uu in self.trackobj_dict:
-                            uu = self.trackobj_dict[uu]
-                            xyz = self.spot_dict[uu]
-                            tracks[u].append(xyz)
-                            timestamps[u].append(tt+i)
-                            uids.append(u)
-                        else:
-                            break
-
-        if in_voxels:
-            for t in tracks:
-                tracks[t] = np.array(tracks[t]) / self.resolution
+                if u in uids:
+                    continue
+                else:
+                    tr,ti,ui = self.build_track(u,in_voxels=in_voxels)
+                    tracks[u] = tr
+                    timestamps[u] = ti
+                    uids.extend(ui)
         return tracks, timestamps
     
+    def build_tracks_t(self,t=0,nt=10,in_voxels=True):
+        tracks = {}
+        timestamps = {}
+        idx = self.toffset_dict[t]
+        uids = self.spot_uid[idx[0]:idx[1]]
+        for u in uids:
+            tr,ti,_ = self.build_track(u,in_voxels=in_voxels)
+            tracks[u] = tr
+            timestamps[u] = ti
+        return tracks, timestamps
+
+    def build_track(self,uid,in_voxels=True):
+        track = []
+        timestamps = []
+        uids = []
+        uu = uid
+        if uu not in self.trackobj_dict:
+            # Single point track
+            track = [self.spot_dict[uu]]
+            timestamps = [self.t_dict[uu]]
+            uids = [uu]
+        else:
+            while uu in self.trackobj_dict:
+                uids.append(uu)
+                track.append(self.spot_dict[uu])
+                timestamps.append(self.t_dict[uu])
+                uu = self.trackobj_dict[uu]
+        if in_voxels:
+            track = np.array(track) / self.resolution
+        return track, timestamps, uids
+
     @staticmethod
     def decode_imaris_extents(ext):
         val = ""
@@ -78,6 +104,11 @@ class Tracks:
 
 if __name__=="__main__":
     T = Tracks("/research/sharedresources/cbi/data_exchange/tayl1grp/2024_lightsheet/2023-08-23/20230823_Full_Embryo.ims")
-    tracks = T.build_tracks_t(t=60,nt=18)
+    tracks, timestamps = T.build_tracks_t(t=61,nt=36)
+    ims_extents = T.extents
     with open("tracks.pkl","wb") as f:
         pickle.dump(tracks,f)
+    with open("timestamps.pkl","wb") as f:
+        pickle.dump(timestamps,f)
+    with open("ims_extents.pkl","wb") as f:
+        pickle.dump(ims_extents,f)
