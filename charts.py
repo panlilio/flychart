@@ -578,7 +578,7 @@ class BoundaryStandardizer:
         self.set_lambda0()
 
     def set_lambda0(self):
-        #NEEDS WORK--NOT SURE IF THIS IS CORRECT
+        #TODO: test that correct with updated lambda defintion
         if self.origin_key == "10":
             self.lambda0 = 0
         elif self.origin_key == "01":
