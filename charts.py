@@ -660,6 +660,7 @@ if __name__=="__main__":
     data_segmented = itk.imread(args.data_segmented)
     v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS,
                boundary_kwargs={'di':args.di,'eps':args.eps,'dN':args.dN,'dT':args.dT})
+    vals = v.get_chart_vals(z0=args.z0,z1=args.z1)
     if args.do_save:
         vals = v.get_chart_vals(z0=args.z0,z1=args.z1)
         logger.info('Saving chart values and centroid info to file')
@@ -667,4 +668,7 @@ if __name__=="__main__":
             pickle.dump(vals,f)
         with open('centroid.pkl','wb') as f:
             pickle.dump(v.centroid,f)
+    else:
+        v.chart()
+
     logger.info('Done!')
