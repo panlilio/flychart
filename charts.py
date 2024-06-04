@@ -77,8 +77,9 @@ class Volume:
             out = seg
         return out
 
-    @staticmethod
-    def plot_chart(ax,X,Y,F,xlabel='x',ylabel='y',title=None):
+    @classmethod
+    def plot_chart(cls,ax,X,Y,F,xlabel='x',ylabel='y',title=None):
+        X,Y,F = cls.rmnan3(X,Y,F) 
         c = ax.pcolormesh(X,Y,F)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -87,6 +88,21 @@ class Volume:
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
         return c
+
+    @staticmethod
+    def rmnan3(X,Y,Z):
+        if type(X) == list:
+            X= np.array(X)
+        if type(Y) == list:
+            Y= np.array(Y)
+        if type(Z) == list:
+            Z= np.array(Z)
+        notnans =  ~np.isnan(X*Y*Z).any(axis=1)
+        X = X[notnans,:]
+        Y = Y[notnans,:]
+        Z = Z[notnans,:]
+
+        return X,Y,Z
 
     def get_chart_vals(self,z0=0,z1=None):
         if z1 is None:
@@ -453,7 +469,7 @@ class Boundary:
             S[i] = s
             R[i] = r
             W.append(wedge_pts)
-            if i % 25 == 0:
+            if i % 25 == 0 or i == len(X)-1:
                 logger.debug('Processed %d points',i)
         logger.debug('...done.')
         return S, R, W
@@ -475,7 +491,7 @@ class Boundary:
 
     @staticmethod
     def xy_to_arclength(x_,y_):
-        if len(x_)==0:
+        if len(x_) < 2:
             return [0]
         else:
             arclength = np.zeros(len(x_))
@@ -660,7 +676,6 @@ if __name__=="__main__":
     data_segmented = itk.imread(args.data_segmented)
     v = Volume(data_intensity=data_intensity,data_segmented=data_segmented,projection_type=args.projection_type,intensity_method=args.intensity_method,nS=args.nS,
                boundary_kwargs={'di':args.di,'eps':args.eps,'dN':args.dN,'dT':args.dT})
-    vals = v.get_chart_vals(z0=args.z0,z1=args.z1)
     if args.do_save:
         vals = v.get_chart_vals(z0=args.z0,z1=args.z1)
         logger.info('Saving chart values and centroid info to file')
