@@ -10,4 +10,7 @@ All available using `pip install`:
 - h5py
 - hdf5plugin
 
+## General usage
+Flychart has 3 primary scripts to perform 
+
 ### charts.py
