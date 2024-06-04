@@ -1,6 +1,9 @@
 # Flychart: mapping 3D surfaces to 2D representations
 Flychart aids the visualization of 3D image volumes by reparameterizing the object's surface to obtain a flattened 2D representation. This is especially useful when visualizing volumetric time series. While the package was developed with the study of fluorescent molecule patterning during fly embryo development, it can be applied to any 3D volume provided that the following criteria are met: (i) the features of interest occur near the object's surface, and (ii) cross-sections along at least one axis of the object yield a single, continguous area [see details [here](#chartspy)].
 
+### Example output based on synthetic, noisy ellipsoid
+![pic](https://github.com/panlilio/flychart/blob/main/tests/results/dummy_chart.png?raw=true)
+
 ## Core dependencies
 All available using `pip install`:
 - numpy
