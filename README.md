@@ -46,6 +46,8 @@ This is the main Flychart module containing the classes responsible for unwrappi
 6. For each boundary point, calculate the local tangent and normal vectors to define a local neighborhood of pixels
 7. In each neighborhood, calculate the desired statistic: e.g. the maximum  
 
+![schema](https://github.com/panlilio/flychart/blob/main/tests/results/schematic.png?raw=true)
+
 Each boundary point can be defined by its slice and arclength value along the surface. The final 2D representation lies in (arclength,z)-space. This space will be locally similar to the original 3D surface.
 
 Depending on the object of interest, it might make sense to convert to a (longitude,latitude)-like representation and/or other 3D-to-2D surface projections. Currently, Flychart only supports the conversion to (longitude,latitude) by normalizing arclength and z; and from there the [Hammer projection](https://pro.arcgis.com/en/pro-app/latest/help/mapping/properties/hammer.htm). These are shown [above](#flychart-mapping-3d-surfaces-to-2d-representations). 
